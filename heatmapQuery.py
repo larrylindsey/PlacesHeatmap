@@ -4,11 +4,12 @@ from httplib import HTTPSConnection
 '''
 Read a list of Google Places into a dict
 
+  api_key - your api key
   type_str - the type string used in the query. Can be single, like 'cafe', or multiple,
              as in 'cafe|bar'
-  api_key - your api key
   lat_lngs - a list of lat,lng tuples. Each location will be queried and added to the
              dict
+  radius - the radius about which the lat_lngs to search, in meters. Defaults to 6km
 
 Returns
   a dict in which the keys are the unique id assigned to each place by Google, and the
