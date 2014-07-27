@@ -35,8 +35,10 @@ def queryLocations(api_key, type_str, lat_lngs, radius = 6000):
         json_body = req.read()
         
         places_json = json.loads(json_body)
-        curr_locs = {result['id'] : result['geometry']['location'] for result in
-            places_json['results']}
+        curr_locs = {result['id'] :
+            (result['geometry']['location']['lat'],
+             result['geometry']['location']['lng'])
+            for result in places_json['results']}
         locs_dict = dict(locs_dict.items() + curr_locs.items())
     
     return locs_dict
