@@ -43,8 +43,10 @@ def queryLocations(api_key, type_str, lat_lngs, radius = 6000):
             (result['geometry']['location']['lat'],
              result['geometry']['location']['lng'])
             for result in places_json['results']}
+        print 'Found ' + str(len(curr_locs)) + ' places'
         locs_dict = dict(locs_dict.items() + curr_locs.items())
     
+    print 'Returning ' + str(len(locs_dict)) + ' places'
     return locs_dict
 
 '''
