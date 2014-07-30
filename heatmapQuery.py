@@ -2,7 +2,9 @@ import json
 import os
 import string
 import copy
+import math
 from httplib import HTTPSConnection
+from httplib import HTTPConnection
 
 '''
 Read a list of Google Places into a dict
@@ -125,5 +127,107 @@ def generateHeatmapHTML(api_key, city_name, type_strs, lat_lngs,
         f_html.write(html_str.substitute(place_data = places_declaration,
                                          view_data = view_declaration))
         f_html.close()
-        
+
+'''
+Find the SouthWest/NorthEast limits of the approximate bounding box around a city
+This function works by querying the geocode api, supplying city_name for the address.
+In order for it to work properly, your city must come up as the first result of the
+query.
+
+  city_name - the name of the city in question
+    
+Returns
+  (sw, ne), where sw is the SouthWest boundary returned by geocode, and
+            ne is the NorthEast
+'''
+def queryCityBounds(city_name):
+    url = '/maps/api/geocode/json?address=' + city_name + '&sensor=false'
+    conn = HTTPConnection('maps.googleapis.com')
+    conn.request('GET', url)
+    res = conn.getresponse()
+    
+    if res.status is not 200:
+        raise Exception(res.reason)
+    
+    bound_json = json.loads(res.read())
+    
+    results = bound_json['results']
+    
+    if len(results) < 1:
+        raise Exception('No search results')
+    
+    geom = results[0]['geometry']
+    
+    if not geom.has_key('bounds'):
+        raise Exception('First result didn''t have bounds')
+    
+    sw = (geom['bounds']['southwest']['lat'], geom['bounds']['southwest']['lng'])
+    ne = (geom['bounds']['northeast']['lat'], geom['bounds']['northeast']['lng'])
+    return sw, ne
+
+def drange(start, stop, step):
+    if step * start > step * stop:
+        raise Exception('Invalid parameters %g, %g, %g', start, stop, step)
+    
+    if step == 0:
+        raise Exception('Cannot have zero step')
+    
+    expect = (stop - start) / step
+    
+    d = start
+    r = []
+    while d < stop:
+        r.append(d)
+        d += step
+    
+    return r
+
+
+'''
+Make an equilateral-triangle grid across the bounding box defined by (sw, ne), spaced by at most
+[resolution] number of meters.
+
+  sw - the southwest (lat, lng) of the bounding box
+  ne - the northeast --"--
+  resolution - the maximal grid resolution, in meters
+
+Returns
+  A list of (lat, lng) tuples forming the grid. May be used directly queryLocations or 
+    generateHeatmapHTML
+'''
+def makeGrid(sw, ne, resolution):
+    # The Earth is ~40,075km in circumference
+    c_earth = 40075000.0
+    
+    delta_lng = ne[1] - sw[1]
+    if delta_lng < 0:
+        raise Exception('Negative longitudinal extent.' +
+            ' Does your city cross 180 degrees of longitude?')
+            
+    # A degree of longitude varies in metric length depending on the latitude.
+    # We approximate by the value at the northern or southern extent, depending on which is further
+    # from the equator.
+    meters_to_lat = c_earth / 360.0
+    
+    if ne[0] > -sw[0]:
+        meters_to_lng = meters_to_lat * math.cos(math.radians(ne[0]))
+    else:
+        meters_to_lng = meters_to_lat * math.cos(math.radians(sw[0]))
+    
+    # delta_lat is scaled down, since we're building a triangular grid
+    delta_lat = math.sqrt(0.75) * resolution / meters_to_lat
+    delta_lng = resolution / meters_to_lng
+    
+    lat_lng = []
+    
+    for i, lat in enumerate(drange(sw[0], ne[0], delta_lat)):
+        if i % 2 is not 0:
+            lng_offset = delta_lng / 2.0
+        else:
+            lng_offset = 0.0
+
+        for lng in drange(sw[1], ne[1], delta_lng):
+            lat_lng.append((lat, lng + lng_offset))
+     
+    return lat_lng
 
