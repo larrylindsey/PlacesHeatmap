@@ -36,14 +36,21 @@ class PlacesQuery:
         self.__lat_lngs = []
         self.__query = self.__radar_query
         self.__param_string = None
+        self.__sw = None
+        self.__ne = None
 
-        for key in ('radius', 'city'):
-            setattr(self, '__' + key, kwargs[key])
+        print kwargs
+
+        if 'radius' in kwargs:
+            self.__radius = kwargs['radius']
+
+        if 'city' in kwargs:
+            self.__city = kwargs['city']
 
         # see https://developers.google.com/places/documentation/search
         for key in ('keyword', 'language', 'minprice', 'maxprice', 'name', 'opennow', 'rankby', 'types'):
             if key in kwargs:
-                self.__param_dict[key] = kwargs[dict]
+                self.__param_dict[key] = kwargs[key]
 
         if 'method' in kwargs:
             self.set_method(kwargs['method'])
@@ -113,7 +120,7 @@ class PlacesQuery:
       This function may raise HTTPSExceptions
     '''
     def __radar_query(self):
-        url_template = '/maps/api/place/radarsearch/json?key=%s&location=%s&radius=%g&types=%s'
+        url_template = '/maps/api/place/radarsearch/json?key=%s&location=%s&radius=%g'
 
         conn = HTTPSConnection('maps.googleapis.com')
 
@@ -191,8 +198,8 @@ class PlacesQuery:
       (sw, ne), where sw is the SouthWest boundary returned by geocode, and
                 ne is the NorthEast
     '''
-    def __search_city_bounds(self, city_name):
-        url = '/maps/api/geocode/json?address=' + city_name + '&sensor=false'
+    def __search_city_bounds(self):
+        url = '/maps/api/geocode/json?address=' + self.__city + '&sensor=false'
         conn = HTTPConnection('maps.googleapis.com')
         conn.request('GET', url)
         res = conn.getresponse()
@@ -217,7 +224,12 @@ class PlacesQuery:
 
         conn.close()
 
-        return sw, ne
+        self.__sw = sw
+        self.__ne = ne
+
+        def set_bounds(sw, ne):
+            self.__sw = sw
+            self.__ne = ne
 
     '''
     Make an equilateral-triangle grid across the bounding box defined by (sw, ne), spaced by at most
@@ -231,14 +243,20 @@ class PlacesQuery:
       A list of (lat, lng) tuples forming the grid. May be used directly queryLocations or
         generateHeatmapHTML
     '''
-    def makeGrid(self, sw, ne, resolution):
+    def make_grid(self):
         # The Earth is ~40,075km in circumference
         c_earth = 40075000.0
+
+        if self.__sw is None or self.__ne is None:
+            self.__search_city_bounds()
+
+        sw = self.__sw
+        ne = self.__ne
 
         delta_lng = ne[1] - sw[1]
         if delta_lng < 0:
             raise Exception('Negative longitudinal extent.' +
-                ' Does your city cross 180 degrees of longitude?')
+                            ' Does your city cross 180 degrees of longitude?')
 
         # A degree of longitude varies in metric length depending on the latitude.
         # We approximate by the value at the northern or southern extent, depending on which is further
@@ -251,8 +269,8 @@ class PlacesQuery:
             meters_to_lng = meters_to_lat * math.cos(math.radians(sw[0]))
 
         # delta_lat is scaled down, since we're building a triangular grid
-        delta_lat = math.sqrt(0.75) * resolution / meters_to_lat
-        delta_lng = resolution / meters_to_lng
+        delta_lat = math.sqrt(0.75) * self.__radius / meters_to_lat
+        delta_lng = self.__radius / meters_to_lng
 
         lat_lng = []
 
@@ -265,7 +283,7 @@ class PlacesQuery:
             for lng in drange(sw[1], ne[1], delta_lng):
                 lat_lng.append((lat, lng + lng_offset))
 
-        return lat_lng
+        self.__lat_lngs = lat_lng
 
     def param_string(self):
         if self.__param_string is None:
@@ -304,7 +322,12 @@ class PlacesQuery:
     def get_city(self):
         return self.__city
 
+    def get_grid(self):
+        return self.__lat_lngs
+
     def query(self):
+        if len(self.__param_dict) == 0:
+            raise Exception('No type or keyword terms')
         self.__locs_dict = self.__query()
         self.__locs = self.__results_to_locations(self.__locs_dict)
 
