@@ -24,6 +24,42 @@ def drange(start, stop, step):
 
     return r
 
+class Mesh:
+    class MeshPoint:
+        def __init__(self, idx, lat_lng, r):
+            self.__idx = idx
+            self.__lat_lng = lat_lng
+            self.__nbd = []
+            self.__r = r
+
+        def idx(self):
+            return self.__idx
+
+        def lat_lng(self):
+            return self.__lat_lng
+
+        def radius(self):
+            return self.__r
+
+        def add_neighbor(self, mesh_point):
+            self.__nbd.append(mesh_point)
+
+        def get_neighbors(self):
+            return list(self.__nbd)
+
+        def refine(self):
+            self.__r /= 2.0
+            # create new mesh points
+
+
+    def __init__(self):
+        pass
+
+    def get_points(self):
+        pass
+
+    def refine(self, mesh_point):
+        pass
 
 class PlacesQuery:
     def __init__(self, key, **kwargs):
