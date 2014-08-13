@@ -144,7 +144,7 @@ class PlacesQuery:
         return locs_dict
 
     def __nearby_query(self):
-        url_template = '/maps/api/place/nearbysearch/json?key=%s&location=%s&radius=%g&types=%s'
+        url_template = '/maps/api/place/nearbysearch/json?key=%s&location=%s&radius=%g'
         next_url_template = '/maps/api/place/nearbysearch/json?key=%s&pagetoken=%s'
         conn = HTTPSConnection('maps.googleapis.com')
 
@@ -288,12 +288,14 @@ class PlacesQuery:
     def param_string(self):
         if self.__param_string is None:
             pstr = ''
+            sep = ''
 
             if 'types' in self.__param_dict:
-                pstr += '_' + self.__param_dict['types'].replace('|', '_or_')
+                pstr += sep + self.__param_dict['types'].replace('|', '_or_')
+                sep = '_'
 
             if 'keyword' in self.__param_dict:
-                pstr += '_' + self.__param_dict['keyword']
+                pstr += sep + self.__param_dict['keyword']
 
             self.__param_string = pstr
 
