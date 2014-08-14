@@ -24,42 +24,134 @@ def drange(start, stop, step):
 
     return r
 
+
+class MeshTriangle:
+    def __init__(self, triplet_lat_lng, r):
+        self.__triplet = triplet_lat_lng
+        self.__nbd = []
+        self.__r = r
+
+        # Find the mean lat_lng in the triplet
+        m_lat = sum([lat_lng[0] for lat_lng in triplet_lat_lng]) / float(len(triplet_lat_lng))
+        m_lng = sum([lat_lng[1] for lat_lng in triplet_lat_lng]) / float(len(triplet_lat_lng))
+        self.__lat_lng = (m_lat, m_lng)
+
+    @staticmethod
+    def __mid(a, b):
+        return (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+
+    def lat_lng(self):
+        return self.__lat_lng
+
+    def radius(self):
+        return self.__r
+
+    def add_neighbor(self, mesh_point):
+        self.__nbd.append(mesh_point)
+
+    def get_neighbors(self):
+        return list(self.__nbd)
+
+    def split(self):
+        half_r = self.__r / 2.0
+        # The triplet is like ABC. First, calculate midpoints AB, BC, and CA
+        (pt_a, pt_b, pt_c) = self.__triplet
+        pt_ab = self.__mid(pt_a, pt_b)
+        pt_bc = self.__mid(pt_b, pt_c)
+        pt_ca = self.__mid(pt_c, pt_a)
+
+        #now, we create four new triangles.
+        return [MeshTriangle([pt_a, pt_ab, pt_ca], half_r),
+                MeshTriangle([pt_ab, pt_b, pt_bc], half_r),
+                MeshTriangle([pt_ab, pt_bc, pt_ca], half_r),
+                MeshTriangle([pt_ca, pt_bc, pt_c], half_r)]
+
+
 class Mesh:
-    class MeshPoint:
-        def __init__(self, idx, lat_lng, r):
-            self.__idx = idx
-            self.__lat_lng = lat_lng
-            self.__nbd = []
-            self.__r = r
+    def __init__(self, **kwargs):
+        self.__mesh = []
 
-        def idx(self):
-            return self.__idx
+        if 'sw' in kwargs and 'ne' in kwargs:
+            self.__initialize_mesh(kwargs['sw'], kwargs['ne'])
+        elif 'triangles' in kwargs:
+            self.__recreate_mesh(kwargs['triangles'])
+        else:
+            raise Exception('A Mesh must be instantiated with either sw/ne bounds or a triangle dict')
 
-        def lat_lng(self):
-            return self.__lat_lng
-
-        def radius(self):
-            return self.__r
-
-        def add_neighbor(self, mesh_point):
-            self.__nbd.append(mesh_point)
-
-        def get_neighbors(self):
-            return list(self.__nbd)
-
-        def refine(self):
-            self.__r /= 2.0
-            # create new mesh points
-
-
-    def __init__(self):
+    def __initialize_mesh(self, sw, ne):
         pass
+
+    def __recreate_mesh(self, triangles):
+        for d in triangles.values():
+            triplet_lat_lng = d['lat_lngs']
+            r = d['r']
+            self.__mesh.append(MeshTriangle(triplet_lat_lng, r))
+
+    '''
+    Creates a list of lists. Each inner list contains a single raster across longitude for a different latitude.
+    Each lat_lng sample is at most r meters from its nearest neighbors. The sampling pattern approximates a mesh of
+    equilateral triangles
+
+      sw - the southwest corner bounding the sample mesh region
+      ne - the northeast corner --"--
+      r - the minimum distance between nearest neighbors
+
+    This function is kind of dumb. If the bounded region overlaps 180 degrees of longitude, it will raise an Exception.
+    It makes a flat approximation of lat/lng across the globe, meaning that near the equator things will be as accurate
+    as possible, but samples will be closer together at the extreme latitudes, especially for large regions near the
+    poles.
+    '''
+    @staticmethod
+    def __make_grid(sw, ne, r):
+        # The Earth is ~40,075km in circumference
+        c_earth = 40075000.0
+
+        delta_lng = ne[1] - sw[1]
+        if delta_lng < 0:
+            raise Exception('Negative longitudinal extent.' +
+                            ' Does your city cross 180 degrees of longitude?')
+
+        # A degree of longitude varies in metric length depending on the latitude.
+        # We approximate by the value at the northern or southern extent, depending on which is further
+        # from the equator.
+        meters_to_lat = c_earth / 360.0
+
+        if ne[0] > -sw[0]:
+            meters_to_lng = meters_to_lat * math.cos(math.radians(ne[0]))
+        else:
+            meters_to_lng = meters_to_lat * math.cos(math.radians(sw[0]))
+
+        # delta_lat is scaled down, since we're building a triangular grid
+        delta_lat = math.sqrt(0.75) * r / meters_to_lat
+        delta_lng = r / meters_to_lng
+
+        lat_lng_ll = []
+
+        for i, lat in enumerate(drange(sw[0], ne[0], delta_lat)):
+            lat_lng = []
+            lat_lng_ll.append(lat_lng)
+            if i % 2 is not 0:
+                lng_offset = delta_lng / 2.0
+            else:
+                lng_offset = 0.0
+
+            for lng in drange(sw[1], ne[1], delta_lng):
+                lat_lng.append((lat, lng + lng_offset))
+
+        return lat_lng_ll
 
     def get_points(self):
-        pass
+        return list(self.__mesh)
 
-    def refine(self, mesh_point):
-        pass
+    def refine(self, triangle):
+        if triangle in self.__mesh:
+            new_triangles = triangle.split()
+            self.__mesh.remove(triangle)
+            self.__mesh.extend(new_triangles)
+            return new_triangles
+        else:
+            raise Exception('Attempted to refine a triangle that is not in the mesh')
+
 
 class PlacesQuery:
     def __init__(self, key, **kwargs):
@@ -166,7 +258,7 @@ class PlacesQuery:
             lat_lng_str = '%g,%g' % lat_lng
             url = url_template % (self.__api_key, lat_lng_str, self.__radius)
             for key in self.__param_dict:
-                url = url + '&' + key + '=' + self.__param_dict[key]
+                url += '&' + key + '=' + self.__param_dict[key]
 
             places_json = self.__read_url(conn, url)
 
@@ -210,7 +302,7 @@ class PlacesQuery:
                     time.sleep(0.5)
                     places_json = self.__read_url(conn, url)
 
-                curr_locs = {result['id'] : result for result in places_json['results']}
+                curr_locs = {result['id']: result for result in places_json['results']}
                 locs_dict = dict(locs_dict.items() + curr_locs.items())
 
                 count += len(curr_locs)
@@ -252,7 +344,7 @@ class PlacesQuery:
 
         geom = results[0]['geometry']
 
-        if not geom.has_key('bounds'):
+        if not 'bounds' in geom:
             raise Exception('First result didn''t have bounds')
 
         sw = (geom['bounds']['southwest']['lat'], geom['bounds']['southwest']['lng'])
@@ -263,9 +355,9 @@ class PlacesQuery:
         self.__sw = sw
         self.__ne = ne
 
-        def set_bounds(sw, ne):
-            self.__sw = sw
-            self.__ne = ne
+    def set_bounds(self, sw, ne):
+        self.__sw = sw
+        self.__ne = ne
 
     '''
     Make an equilateral-triangle grid across the bounding box defined by (sw, ne), spaced by at most
