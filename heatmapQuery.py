@@ -25,34 +25,88 @@ def drange(start, stop, step):
     return r
 
 
-class MeshTriangle:
-    def __init__(self, triplet_lat_lng, r):
-        self.__triplet = triplet_lat_lng
-        self.__nbd = []
+class MeshPoint:
+    def __init__(self, lat_lng, r, triangles=None):
+        self.__lat_lng = lat_lng
         self.__r = r
+        if triangles is None:
+            self.__triangles = []
+        else:
+            self.__triangles = triangles
 
-        # Find the mean lat_lng in the triplet
-        m_lat = sum([lat_lng[0] for lat_lng in triplet_lat_lng]) / float(len(triplet_lat_lng))
-        m_lng = sum([lat_lng[1] for lat_lng in triplet_lat_lng]) / float(len(triplet_lat_lng))
-        self.__lat_lng = (m_lat, m_lng)
+    def __eq__(self, other):
+        return self.lat_lng() == other.lat_lng()
 
-    @staticmethod
-    def __mid(a, b):
-        return (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+    def __hash__(self):
+        return 37 * hash(self.__lat_lng[0]) + hash(self.__lat_lng[1])
+
+    def r(self):
+        return self.__r
 
     def lat_lng(self):
         return self.__lat_lng
 
-    def radius(self):
+    def add_triangles(self, triangles):
+        self.__triangles.extend(triangles)
+
+    def add_triangle(self, triangle):
+        self.__triangles.append(triangle)
+
+    def triangles(self):
+        return list(self.__triangles)
+
+    def refine(self):
+        triangles = list(self.__triangles)
+        for triangle in triangles:
+            triangle.split()
+        self.__r /= 2
+
+    def replace_triangle(self, old_tri, new_tri):
+        self.__triangles.remove(old_tri)
+        self.__triangles.append(new_tri)
+
+
+class MeshTriangle:
+    def __init__(self, mp_triplet, r, pt_tri_map=None):
+        self.__triplet = mp_triplet
+        self.__nbd = []
+        self.__r = r
+
+        if pt_tri_map is None:
+            self.__map = dict()
+        else:
+            self.__map = pt_tri_map
+
+    def __mid(self, mp_a, mp_b):
+        a = mp_a.lat_lng()
+        b = mp_b.lat_lng()
+
+        tri_list = []
+        mp_ab = MeshPoint(((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0), self.__r / 2.0, tri_list)
+
+        if mp_ab in self.__map:
+            keys = self.__map.keys()
+            idx = keys.index(mp_ab)
+            return keys[idx]
+        else:
+            self.__map[mp_ab] = tri_list
+            return mp_ab
+
+    def r(self):
         return self.__r
 
-    def add_neighbor(self, mesh_point):
-        self.__nbd.append(mesh_point)
+#    def add_neighbor(self, mesh_point):
+#        self.__nbd.append(mesh_point)
+#
+#    def get_neighbors(self):
+#        return list(self.__nbd)
 
-    def get_neighbors(self):
-        return list(self.__nbd)
+    def points(self):
+        return list(self.__triplet)
 
     def split(self):
+        print 'splitting triangle with r=' + str(self.__r)
+
         half_r = self.__r / 2.0
         # The triplet is like ABC. First, calculate midpoints AB, BC, and CA
         (pt_a, pt_b, pt_c) = self.__triplet
@@ -60,26 +114,90 @@ class MeshTriangle:
         pt_bc = self.__mid(pt_b, pt_c)
         pt_ca = self.__mid(pt_c, pt_a)
 
-        #now, we create four new triangles.
-        return [MeshTriangle([pt_a, pt_ab, pt_ca], half_r),
-                MeshTriangle([pt_ab, pt_b, pt_bc], half_r),
-                MeshTriangle([pt_ab, pt_bc, pt_ca], half_r),
-                MeshTriangle([pt_ca, pt_bc, pt_c], half_r)]
+        a_ab_ca = MeshTriangle([pt_a, pt_ab, pt_ca], half_r, self.__map)
+        ab_b_bc = MeshTriangle([pt_ab, pt_b, pt_bc], half_r, self.__map)
+        ca_bc_c = MeshTriangle([pt_ca, pt_bc, pt_c], half_r, self.__map)
+        ab_bc_ca = MeshTriangle([pt_ab, pt_bc, pt_ca], half_r, self.__map)
+
+        pt_a.replace_triangle(self, a_ab_ca)
+        pt_b.replace_triangle(self, ab_b_bc)
+        pt_c.replace_triangle(self, ca_bc_c)
+        pt_ab.add_triangles([a_ab_ca, ab_b_bc, ab_bc_ca])
+        pt_bc.add_triangles([ab_b_bc, ca_bc_c, ab_bc_ca])
+        pt_ca.add_triangles([a_ab_ca, ca_bc_c, ab_bc_ca])
+
+        return [a_ab_ca, ab_b_bc, ca_bc_c, ab_bc_ca]
 
 
 class Mesh:
     def __init__(self, **kwargs):
-        self.__mesh = []
+        #self.__mesh = []
+        self.__pt_tri_map = dict()
 
-        if 'sw' in kwargs and 'ne' in kwargs:
-            self.__initialize_mesh(kwargs['sw'], kwargs['ne'])
+        if 'sw' in kwargs and 'ne' in kwargs and 'r' in kwargs:
+            self.__initialize_mesh(kwargs['sw'], kwargs['ne'], kwargs['r'])
         elif 'triangles' in kwargs:
             self.__recreate_mesh(kwargs['triangles'])
         else:
-            raise Exception('A Mesh must be instantiated with either sw/ne bounds or a triangle dict')
+            raise Exception('A Mesh must be instantiated with either sw/ne bounds and a radius or a triangle dict')
 
-    def __initialize_mesh(self, sw, ne):
-        pass
+    def __initialize_mesh(self, sw, ne, r):
+        grid, pt_tri_map = self.__make_grid(sw, ne, r)
+        #triangles = self.__triangles
+
+        for i in range(0, len(grid) - 2, 2):
+            # b:  * * * (*)
+            # a: * * * *
+            pt_a = grid[i]
+            pt_b = grid[i + 1]
+
+            for j in range(0, len(pt_a) - 1):
+                # of the form  *
+                #             * *
+                triangle = MeshTriangle((pt_a[j], pt_a[j + 1], pt_b[j]), r, pt_tri_map)
+
+                #triangles.append(triangle)
+                pt_a[j].add_triangle(triangle)
+                pt_a[j + 1].add_triangle(triangle)
+                pt_b[j].add_triangle(triangle)
+
+                # of the form * *
+                #              *
+                if j + 1 < len(pt_b):
+                    triangle = MeshTriangle((pt_a[j + 1], pt_b[j], pt_b[j + 1]), r, pt_tri_map)
+
+                    #triangles.append(triangle)
+                    pt_a[j + 1].add_triangle(triangle)
+                    pt_b[j].add_triangle(triangle)
+                    pt_b[j + 1].add_triangle(triangle)
+
+        for i in range(1, len(grid) - 1, 2):
+            # b: * * * *
+            # a:  * * * (*)
+            pt_a = grid[i]
+            pt_b = grid[i + 1]
+
+            for j in range(0, len(pt_b) - 1):
+                # of the form * *
+                #              *
+                triangle = MeshTriangle((pt_a[j], pt_b[j], pt_b[j + 1]), r, pt_tri_map)
+
+                #triangles.append(triangle)
+                pt_a[j].add_triangle(triangle)
+                pt_b[j].add_triangle(triangle)
+                pt_b[j + 1].add_triangle(triangle)
+
+                # of the form  *
+                #             * *
+                if j + 1 < len(pt_a):
+                    triangle = MeshTriangle((pt_a[j], pt_a[j + 1], pt_b[j + 1]), r, pt_tri_map)
+
+                    #triangles.append(triangle)
+                    pt_a[j].add_triangle(triangle)
+                    pt_a[j + 1].add_triangle(triangle)
+                    pt_b[j + 1].add_triangle(triangle)
+
+        self.__pt_tri_map = pt_tri_map
 
     def __recreate_mesh(self, triangles):
         for d in triangles.values():
@@ -90,7 +208,12 @@ class Mesh:
     '''
     Creates a list of lists. Each inner list contains a single raster across longitude for a different latitude.
     Each lat_lng sample is at most r meters from its nearest neighbors. The sampling pattern approximates a mesh of
-    equilateral triangles
+    equilateral triangles, like
+
+      * * *
+     * * * *
+      * * *
+     * * * *
 
       sw - the southwest corner bounding the sample mesh region
       ne - the northeast corner --"--
@@ -105,6 +228,7 @@ class Mesh:
     def __make_grid(sw, ne, r):
         # The Earth is ~40,075km in circumference
         c_earth = 40075000.0
+        point_triangle_map = dict()
 
         delta_lng = ne[1] - sw[1]
         if delta_lng < 0:
@@ -125,23 +249,27 @@ class Mesh:
         delta_lat = math.sqrt(0.75) * r / meters_to_lat
         delta_lng = r / meters_to_lng
 
-        lat_lng_ll = []
+        points_ll = []
 
         for i, lat in enumerate(drange(sw[0], ne[0], delta_lat)):
-            lat_lng = []
-            lat_lng_ll.append(lat_lng)
+            points = []
+            points_ll.append(points)
             if i % 2 is not 0:
                 lng_offset = delta_lng / 2.0
             else:
                 lng_offset = 0.0
 
             for lng in drange(sw[1], ne[1], delta_lng):
-                lat_lng.append((lat, lng + lng_offset))
+                lat_lng = (lat, lng + lng_offset)
+                triangles = []
+                point = MeshPoint(lat_lng, r, triangles)
+                point_triangle_map[point] = triangles
+                points.append(point)
 
-        return lat_lng_ll
+        return points_ll, point_triangle_map
 
     def get_points(self):
-        return list(self.__mesh)
+        return list(self.__pt_tri_map.keys())
 
     def refine(self, triangle):
         if triangle in self.__mesh:
@@ -166,8 +294,6 @@ class PlacesQuery:
         self.__param_string = None
         self.__sw = None
         self.__ne = None
-
-        print kwargs
 
         if 'radius' in kwargs:
             self.__radius = kwargs['radius']
