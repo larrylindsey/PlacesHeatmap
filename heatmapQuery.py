@@ -92,6 +92,16 @@ class MeshTriangle:
             self.__map[mp_ab] = tri_list
             return mp_ab
 
+    def __eq__(self, other):
+        return self.points() == other.points() and self.r() == other.r()
+
+    def __hash__(self):
+        hval = self.r()
+        for point in self.points():
+            hval *= 37
+            hval += hash(point)
+        return hval
+
     def r(self):
         return self.__r
 
@@ -105,8 +115,6 @@ class MeshTriangle:
         return list(self.__triplet)
 
     def split(self):
-        print 'splitting triangle with r=' + str(self.__r)
-
         half_r = self.__r / 2.0
         # The triplet is like ABC. First, calculate midpoints AB, BC, and CA
         (pt_a, pt_b, pt_c) = self.__triplet
@@ -140,6 +148,65 @@ class Mesh:
             self.__recreate_mesh(kwargs['triangles'])
         else:
             raise Exception('A Mesh must be instantiated with either sw/ne bounds and a radius or a triangle dict')
+
+    def get_points(self):
+        return list(self.__pt_tri_map.keys())
+
+    def to_dict(self):
+        mesh_dict = dict()
+        point_list = []
+        tri_list = []
+
+        idx_point_map = dict()
+        tri_set = set()
+
+        # first pass:
+        #  a) build a map point -> i
+        #  b) insert point dict into point_list like
+        #      'i':       index
+        #      'lat_lng': location
+        #      'r':       search radius
+        # c) Populate the triangle set
+        for i, point in enumerate(self.__pt_tri_map.keys()):
+            point_list.append({'idx': i, 'lat_lng': point.lat_lng(), 'r': point.r()})
+            idx_point_map[point] = i
+            for triangle in self.__pt_tri_map[point]:
+                tri_set.add(triangle)
+
+        # second pass:
+        #   insert triangle dict into tri_list like
+        #     'tri_idx': a list of the indices (as in point_list) of the points belonging to this triangle
+        #     'r':       the search radius for this triangle (redundant?)
+        for triangle in tri_set:
+            tri_list.append({'tri_idx': [idx_point_map[point] for point in triangle.points()],
+                             'r': triangle.r()})
+
+        mesh_dict['points'] = point_list
+        mesh_dict['triangles'] = tri_list
+
+        return mesh_dict
+
+    def __recreate_mesh(self, triangles):
+        if 'points' not in triangles or 'triangles' not in triangles:
+            raise Exception('triangle dict must have keys ''points'' and ''triangles''')
+
+        idx_point_map = dict()
+
+        for point_dict in triangles['points']:
+            idx = int(point_dict['idx'])
+            lat_lng = map(float, point_dict['lat_lng'])
+            r = float(point_dict['r'])
+            pt_tri_list = []
+            point = MeshPoint(lat_lng, r, pt_tri_list)
+            idx_point_map[idx] = point
+            self.__pt_tri_map[point] = pt_tri_list
+
+        for tri_dict in triangles['triangles']:
+            tri_pt = [idx_point_map[idx] for idx in map(int, tri_dict['tri_idx'])]
+            r = float(tri_dict['r'])
+            triangle = MeshTriangle(tri_pt, r, self.__pt_tri_map)
+            for point in tri_pt:
+                point.add_triangle(triangle)
 
     def __initialize_mesh(self, sw, ne, r):
         grid, pt_tri_map = self.__make_grid(sw, ne, r)
@@ -199,11 +266,6 @@ class Mesh:
 
         self.__pt_tri_map = pt_tri_map
 
-    def __recreate_mesh(self, triangles):
-        for d in triangles.values():
-            triplet_lat_lng = d['lat_lngs']
-            r = d['r']
-            self.__mesh.append(MeshTriangle(triplet_lat_lng, r))
 
     '''
     Creates a list of lists. Each inner list contains a single raster across longitude for a different latitude.
