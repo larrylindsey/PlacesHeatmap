@@ -35,10 +35,14 @@ class MeshPoint:
             self.__triangles = triangles
 
     def __eq__(self, other):
-        return self.lat_lng() == other.lat_lng()
+        return self.lat_lng()[0] == other.lat_lng()[0] and self.lat_lng()[1] == other.lat_lng()[1]\
+            and self.r() == other.r()
 
     def __hash__(self):
         return 37 * hash(self.__lat_lng[0]) + hash(self.__lat_lng[1])
+
+    def __str__(self):
+        return '(' + str(self.__r) + ') ' + str(self.__lat_lng[0]) + ', ' + str(self.__lat_lng[1])
 
     def r(self):
         return self.__r
@@ -77,6 +81,14 @@ class MeshTriangle:
         else:
             self.__map = pt_tri_map
 
+    def __str__(self):
+        sep = ''
+        str_rep = '[' + str(self.__r) + '] '
+        for tri in self.__triplet:
+            str_rep += sep + str(tri)
+            sep = ' -> '
+        return str_rep
+
     def __mid(self, mp_a, mp_b):
         a = mp_a.lat_lng()
         b = mp_b.lat_lng()
@@ -96,7 +108,7 @@ class MeshTriangle:
         return self.points() == other.points() and self.r() == other.r()
 
     def __hash__(self):
-        hval = self.r()
+        hval = hash(self.r())
         for point in self.points():
             hval *= 37
             hval += hash(point)
@@ -148,6 +160,32 @@ class Mesh:
             self.__recreate_mesh(kwargs['triangles'])
         else:
             raise Exception('A Mesh must be instantiated with either sw/ne bounds and a radius or a triangle dict')
+
+    def __eq__(self, other):
+        ok = True
+        our_pts = self.get_points()
+        their_pts = other.get_points()
+
+        for pt in our_pts:
+            if pt not in their_pts:
+                print pt, 'was not in other'
+                ok = False
+
+        our_tris = self.__get_triangles()
+        their_tris = other.__get_triangles()
+        for tri in our_tris:
+            if tri not in their_tris:
+                print str(tri), 'was not in other'
+                ok = False
+
+        return ok
+
+    def __get_triangles(self):
+        tri_set = set()
+        for point in self.get_points():
+            for triangle in self.__pt_tri_map[point]:
+                tri_set.add(triangle)
+        return tri_set
 
     def get_points(self):
         return list(self.__pt_tri_map.keys())
